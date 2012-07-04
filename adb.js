@@ -63,11 +63,12 @@ DebugBridge.prototype.connect = function (callback /* (session: DebugSession) */
     var adb = this;
 
     var sock = net.connect({ port: DebugBridge.DEFAULT_PORT }, function () {
-        console.log('client connected %s:%d', sock.remoteAddress, sock.remotePort);
+        console.log('client connected to %s:%d', sock.remoteAddress, sock.remotePort);
 
         callback(new DebugSession(adb, sock));
     });
 
+    sock.setKeepAlive(true);
     sock.setNoDelay(true);
     sock.on('end', function () {
         console.log('client disconnected');
@@ -104,8 +105,7 @@ function encodeNumber(len) {
     var buf = '';
 
     for (var i=3; i>=0; i--) {
-        var c = (len >> 4*i) & 0xF;
-        buf += '0123456789ABCDEF'.charAt(c);
+        buf += '0123456789ABCDEF'.charAt((len >> 4*i) & 0xF);
     }
 
     return buf;
@@ -115,16 +115,13 @@ function decodeNumber(str) {
     var num = 0;
 
     for (var i=0; i<str.length; i++) {
-        var c = '0123456789ABCDEF'.indexOf(String.fromCharCode(str[i]).toUpperCase());
-
-        num = num * 16 + c;
+        num = num * 16 + '0123456789ABCDEF'.indexOf(String.fromCharCode(str[i]).toUpperCase());
     }
 
     return num;
 }
 
 DebugSession.prototype.sendData = function (data) {
-    console.log(data + ',' + typeof(data) + data.length + ',' + encodeNumber(data.length));
     var buf = encodeNumber(data.length) + data;
 
     console.log('send %d bytes: %s', buf.length, buf);
@@ -222,15 +219,13 @@ var AndroidDevice = exports.AndroidDevice = function (adb, id, type) {
     this.type = type;
 };
 
-AndroidDevice.LOCAL_CLIENT_PREFIX = "emulator-";
-
 AndroidDevice.prototype.toString = function () {
     return util.format('<%s %s>', this.type, this.id);
 };
 
 Object.defineProperty(AndroidDevice.prototype, 'isEmulator', {
     get: function () {
-        return this.id.indexOf(AndroidDevice.LOCAL_CLIENT_PREFIX) == 0;
+        return this.id.indexOf("emulator-") == 0;
     }
 });
 
@@ -239,10 +234,16 @@ var adb = new DebugBridge();
 adb.getVersion(function (version) {
     console.log('Android Debug Bridge version 1.0.%d', version);
 });
+
 adb.listDevices(function (devices) {
     console.log('found %d device %s', devices.length, devices);
 });
 
 adb.traceDevice(function (devices) {
     console.log('found %d device %s', devices.length, devices);
+
+    for (var i=0; i<devices.length; i++) {
+        var device = devices[i];
+
+    }
 });
