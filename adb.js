@@ -104,7 +104,7 @@ function encodeNumber(len) {
     var buf = '';
 
     for (var i=3; i>=0; i--) {
-        var c = (len >> 8*i) & 0xF;
+        var c = (len >> 4*i) & 0xF;
         buf += '0123456789ABCDEF'.charAt(c);
     }
 
@@ -124,6 +124,7 @@ function decodeNumber(str) {
 }
 
 DebugSession.prototype.sendData = function (data) {
+    console.log(data + ',' + typeof(data) + data.length + ',' + encodeNumber(data.length));
     var buf = encodeNumber(data.length) + data;
 
     console.log('send %d bytes: %s', buf.length, buf);
@@ -150,7 +151,7 @@ DebugSession.prototype.parseData = function (data, callback /* (data: buffer) */
 DebugSession.prototype.recvData = function (callback /* (data: buffer) */) {
     var adb = this;
 
-    this.sock.once('data', function (data) {
+    this.sock.on('data', function (data) {
         console.log('recv %d bytes: %s', data.length, data);
 
         var code = data.slice(0, 4).toString();
@@ -184,22 +185,34 @@ DebugBridge.prototype.getVersion = function (callback /* (version: number) */) {
     });
 };
 
+function parseDevices(adb, data) {
+    var lines = data.toString().split('\n');
+    var devices = [];
+
+    for (var i=0; i<lines.length; i++) {
+        var o = lines[i].split('\t');
+
+        if (o.length == 2) {
+            devices.push(new AndroidDevice(adb, o[0], o[1]));
+        }
+    }
+
+    return devices;
+}
+
 DebugBridge.prototype.listDevices = function (callback /* (devices: AndroidDevice[]) */) {
     var adb = this;
 
     this.execCommand('host:devices', function (data) {
-        var lines = data.toString().split('\n');
-        var devices = [];
+        callback(parseDevices(adb, data));
+    });
+};
 
-        for (var i=0; i<lines.length; i++) {
-            var o = lines[i].split('\t');
+DebugBridge.prototype.traceDevice = function (callback /* (devices: AndroidDevice[]) */) {
+    var adb = this;
 
-            if (o.length == 2) {
-                devices.push(new AndroidDevice(adb, o[0], o[1]));
-            }
-        }
-
-        callback(devices);
+    this.execCommand('host:track-devices', function (data) {
+        callback(parseDevices(adb, data));
     });
 };
 
@@ -227,5 +240,9 @@ adb.getVersion(function (version) {
     console.log('Android Debug Bridge version 1.0.%d', version);
 });
 adb.listDevices(function (devices) {
+    console.log('found %d device %s', devices.length, devices);
+});
+
+adb.traceDevice(function (devices) {
     console.log('found %d device %s', devices.length, devices);
 });
