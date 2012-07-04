@@ -7,6 +7,13 @@ var DebugBridge = exports.DebugBridge = function () {
         DebugBridge.initialize();
         DebugBridge.initialized = true;
     }
+
+    this.autoStartDaemon = true;
+};
+
+var DebugSession = function (adb, sock) {
+    this.adb = adb;
+    this.sock = sock;
 };
 
 DebugBridge.DEFAULT_PORT = 5037;
@@ -29,7 +36,7 @@ DebugBridge.initialize = function () {
     });
 };
 
-DebugBridge.start_server = function (callback) {
+DebugBridge.start_server = function (callback /* (code: number) */) {
     var spawn = require('child_process').spawn;
 
     var adb = spawn('./adb', ['start-server']);
@@ -52,38 +59,44 @@ DebugBridge.kill_server = function () {
 
 };
 
-DebugBridge.prototype.connect = function (callback) {
+DebugBridge.prototype.connect = function (callback /* (session: DebugSession) */) {
     var adb = this;
 
-    adb.sock = net.connect({ port: DebugBridge.DEFAULT_PORT }, function () {
-        console.log('client connected %s:%d', adb.sock.remoteAddress, adb.sock.remotePort);
+    var sock = net.connect({ port: DebugBridge.DEFAULT_PORT }, function () {
+        console.log('client connected %s:%d', sock.remoteAddress, sock.remotePort);
 
-        callback(adb);
+        callback(new DebugSession(adb, sock));
     });
 
-    adb.sock.setNoDelay(true);
-    adb.sock.on('end', function () {
+    sock.setNoDelay(true);
+    sock.on('end', function () {
         console.log('client disconnected');
 
-        adb.sock.end();
+        sock.end();
     });
-    adb.sock.on('timeout', function () {
+    sock.on('timeout', function () {
         console.log('client timeout');
     });
-    adb.sock.on('error', function (err) {
+    sock.on('error', function (err) {
         if ('ECONNREFUSED' == err.errno) {
             console.log('client connect refused, restarting adb daemon...');
 
-            DebugBridge.start_server(function (code) {
-                console.log('start adb daemon: %d', code);
+            if (this.autoStartDaemon) {
+                DebugBridge.start_server(function (code) {
+                    console.log('start adb daemon: %d', code);
 
-                if (code == 0) {
-                    adb.connect(callback);
-                }
-            });
+                    if (code == 0) {
+                        adb.connect(callback);
+                    }
+                });
+
+                return;
+            }
         } else {
             console.error('client caught exception: ' + err);
         }
+
+        throw err;
     });
 };
 
@@ -110,7 +123,7 @@ function decodeNumber(str) {
     return num;
 }
 
-DebugBridge.prototype.sendData = function (data) {
+DebugSession.prototype.sendData = function (data) {
     var buf = encodeNumber(data.length) + data;
 
     console.log('send %d bytes: %s', buf.length, buf);
@@ -118,7 +131,7 @@ DebugBridge.prototype.sendData = function (data) {
     this.sock.write(buf);
 };
 
-DebugBridge.prototype.parseData = function (data, callback) {
+DebugSession.prototype.parseData = function (data, callback /* (data: buffer) */) {
     var len = decodeNumber(data.slice(0, 4));
 
     console.log('found %d bytes data: %s', len, data.slice(4, 4+len));
@@ -134,7 +147,7 @@ DebugBridge.prototype.parseData = function (data, callback) {
     }
 };
 
-DebugBridge.prototype.recvData = function (callback) {
+DebugSession.prototype.recvData = function (callback /* (data: buffer) */) {
     var adb = this;
 
     this.sock.once('data', function (data) {
@@ -158,23 +171,61 @@ DebugBridge.prototype.recvData = function (callback) {
     });
 };
 
-DebugBridge.prototype.execCommand = function (cmd, callback) {
-    this.recvData(callback);
-    this.sendData(cmd);
+DebugBridge.prototype.execCommand = function (cmd, callback /* (data: buffer) */) {
+    this.connect(function (session) {
+        session.recvData(callback);
+        session.sendData(cmd);
+    });
 };
 
-DebugBridge.prototype.getVersion = function (callback) {
-    console.log('getting version');
-
+DebugBridge.prototype.getVersion = function (callback /* (version: number) */) {
     this.execCommand('host:version', function (data) {
         callback(decodeNumber(data));
     });
 };
 
+DebugBridge.prototype.listDevices = function (callback /* (devices: AndroidDevice[]) */) {
+    var adb = this;
+
+    this.execCommand('host:devices', function (data) {
+        var lines = data.toString().split('\n');
+        var devices = [];
+
+        for (var i=0; i<lines.length; i++) {
+            var o = lines[i].split('\t');
+
+            if (o.length == 2) {
+                devices.push(new AndroidDevice(adb, o[0], o[1]));
+            }
+        }
+
+        callback(devices);
+    });
+};
+
+var AndroidDevice = exports.AndroidDevice = function (adb, id, type) {
+    this.adb = adb;
+    this.id = id;
+    this.type = type;
+};
+
+AndroidDevice.LOCAL_CLIENT_PREFIX = "emulator-";
+
+AndroidDevice.prototype.toString = function () {
+    return util.format('<%s %s>', this.type, this.id);
+};
+
+Object.defineProperty(AndroidDevice.prototype, 'isEmulator', {
+    get: function () {
+        return this.id.indexOf(AndroidDevice.LOCAL_CLIENT_PREFIX) == 0;
+    }
+});
+
 var adb = new DebugBridge();
 
-adb.connect(function (adb) {
-    adb.getVersion(function (version) {
-        console.log('Android Debug Bridge version 1.0.%d', version);
-    });
+adb.getVersion(function (version) {
+    console.log('Android Debug Bridge version 1.0.%d', version);
+});
+adb.listDevices(function (devices) {
+    console.log('found %d device %s', devices.length, devices);
 });
