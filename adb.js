@@ -92,7 +92,7 @@ DebugBridge.prototype.connect = function (callback /* (session: DebugSession) */
         if ('ECONNREFUSED' == err.errno) {
             console.log('client connect refused, restarting adb daemon...');
 
-            if (this.autoStartDaemon) {
+            if (adb.autoStartDaemon) {
                 DebugBridge.start_server(function (code) {
                     console.log('start adb daemon: %d', code);
 
@@ -362,7 +362,51 @@ AndroidFrame.prototype.parseData = function (data) {
 
         console.log('found a %dx%d@%d frame with %d bytes', this.width, this.height, this.depth, this.size);
     }
+};
+
+function getMask(length) {
+    return (1 << length) - 1;
 }
+
+AndroidFrame.prototype.writePngFile = function (filename) {
+    pnglib = require('./png');
+
+    var png = new pnglib.PNGFile(this.width, this.height, this.depth * 8);
+
+    console.log("generating PNG file...");
+
+    for (var x=0; x<this.width; x++) {
+        for (var y=0; y<this.height; y++) {
+            var val;
+
+            if (this.depth == 16) {
+                val = this.pixels.readUInt16BE((y * this.width + x)*2);
+            } else if (this.depth == 32) {
+                val = this.pixels.readUInt32LE((y * this.width + x)*4);
+            }
+
+            var r = ((val >>> this.red_offset) & getMask(this.red_length)) << (8 - this.red_length);
+            var g = ((val >>> this.green_offset) & getMask(this.green_length)) << (8 - this.green_length);
+            var b = ((val >>> this.blue_offset) & getMask(this.blue_length)) << (8 - this.blue_length);
+            var a = (this.alpha_length == 0) ? 0xFF : (((val >>> this.alpha_offset) & getMask(this.alpha_length)) << (8 - this.alpha_length));
+
+            png.buffer[png.index(x, y)] = png.color(r, g, b, a);
+        }
+    }
+
+    console.log("writing PNG file...");
+
+    var buf = new Buffer(png.getBase64(), 'base64');
+    require('fs').writeFile(filename, buf, function (err) {
+        if (err) {
+            console.error(err);
+        } else {
+            var spawn = require('child_process').spawn;
+
+            spawn('open', [filename]);
+        }
+    });
+};
 
 var adb = new DebugBridge();
 
@@ -382,6 +426,8 @@ adb.traceDevice(function (devices) {
 
         device.takeSnapshot(function (frame) {
             console.log(frame.toString());
+
+            frame.writePngFile('snapshot.png');
         });
     }
 });
