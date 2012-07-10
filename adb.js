@@ -369,42 +369,25 @@ function getMask(length) {
 }
 
 AndroidFrame.prototype.writePngFile = function (filename) {
-    pnglib = require('./png');
+    console.log("generating PNG file from %d bytes buffer ...", this.pixels.length);
 
-    var png = new pnglib.PNGFile(this.width, this.height, this.depth * 8);
+    var Png = require('png').Png;
+    var png = new Png(this.pixels, this.width, this.height, 'rgba');
 
-    console.log("generating PNG file...");
+    png.encode(function (image, err) {
+        console.log("writing %d bytes PNG file ...", image.length);
 
-    for (var x=0; x<this.width; x++) {
-        for (var y=0; y<this.height; y++) {
-            var val;
+        if (err) { throw new Error(err); }
 
-            if (this.depth == 16) {
-                val = this.pixels.readUInt16BE((y * this.width + x)*2);
-            } else if (this.depth == 32) {
-                val = this.pixels.readUInt32LE((y * this.width + x)*4);
+        require('fs').writeFile(filename, image.toString('binary'), 'binary', function (err) {
+            if (err) {
+                console.error(err);
+            } else {
+                var spawn = require('child_process').spawn;
+
+                spawn('open', [filename]);
             }
-
-            var r = ((val >>> this.red_offset) & getMask(this.red_length)) << (8 - this.red_length);
-            var g = ((val >>> this.green_offset) & getMask(this.green_length)) << (8 - this.green_length);
-            var b = ((val >>> this.blue_offset) & getMask(this.blue_length)) << (8 - this.blue_length);
-            var a = (this.alpha_length == 0) ? 0xFF : (((val >>> this.alpha_offset) & getMask(this.alpha_length)) << (8 - this.alpha_length));
-
-            png.buffer[png.index(x, y)] = png.color(r, g, b, a);
-        }
-    }
-
-    console.log("writing PNG file...");
-
-    var buf = new Buffer(png.getBase64(), 'base64');
-    require('fs').writeFile(filename, buf, function (err) {
-        if (err) {
-            console.error(err);
-        } else {
-            var spawn = require('child_process').spawn;
-
-            spawn('open', [filename]);
-        }
+        });
     });
 };
 
