@@ -305,7 +305,7 @@ var AndroidFrame = function () {
 };
 
 AndroidFrame.prototype.toString = function () {
-    return util.format('<frame %dx%d with %d bytes>', this.width, this.height, this.size);
+    return util.format('<frame %dx%d@%d with %d bytes>', this.width, this.height, this.depth, this.size);
 };
 
 Object.defineProperty(AndroidFrame.prototype, 'isFinished', {
@@ -316,6 +316,8 @@ Object.defineProperty(AndroidFrame.prototype, 'isFinished', {
 
 AndroidFrame.prototype.parseData = function (data) {
     if (this.pixels) {
+        // console.log("append %d bytes: %s", data.length, data.inspect());
+
         this.pixels = Buffer.concat([this.pixels, data], this.pixels.length + data.length);
     } else {
         this.pixels = data;
@@ -368,14 +370,26 @@ function getMask(length) {
     return (1 << length) - 1;
 }
 
-AndroidFrame.prototype.writePngFile = function (filename) {
-    console.log("generating PNG file from %d bytes buffer ...", this.pixels.length);
+AndroidFrame.prototype.writeImageFile = function (filename) {
+    console.log("generating %dx%d image from %d bytes buffer ...", this.width, this.height, this.pixels.length);
 
-    var Png = require('png').Png;
-    var png = new Png(this.pixels, this.width, this.height, 'rgba');
+    var ext = require('path').extname(filename);
+    var Image;
 
-    png.encode(function (image, err) {
-        console.log("writing %d bytes PNG file ...", image.length);
+    if (ext == '.png') {
+        Image = require('png').Png;
+    } else if (ext == '.jpg') {
+        Image = require('jpeg').Jpeg;
+    } else if (ext == '.gif') {
+        Image = require('gif').Gif;
+    } else {
+        throw new Error("unknown image type - " + ext);
+    }
+
+    img = new Image(this.pixels, this.width, this.height, 'rgba');
+
+    img.encode(function (image, err) {
+        console.log("writing %d bytes Image file ...", image.length);
 
         if (err) { throw new Error(err); }
 
@@ -410,7 +424,7 @@ adb.traceDevice(function (devices) {
         device.takeSnapshot(function (frame) {
             console.log(frame.toString());
 
-            frame.writePngFile('snapshot.png');
+            frame.writeImageFile('snapshot.jpg');
         });
     }
 });
