@@ -314,11 +314,39 @@ Object.defineProperty(AndroidFrame.prototype, 'isFinished', {
     }
 });
 
+function getMask(length) {
+    return (1 << length) - 1;
+}
+
 AndroidFrame.prototype.parseData = function (data) {
     if (this.pixels) {
         // console.log("append %d bytes: %s", data.length, data.inspect());
 
         this.pixels = Buffer.concat([this.pixels, data], this.pixels.length + data.length);
+
+        if (this.pixels.length == this.size && this.depth == 16) {
+            var buf = new Buffer(this.width * this.height * 4);
+
+            for (var x=0; x<this.width; x++) {
+                for (var y=0; y<this.height; y++) {
+                    var idx = (y * this.width + x) * 2;
+                    var value = (this.pixels[idx] & 0xFF) | ((this.pixels[idx+1] << 8) & 0xFF00);
+
+                    var r = ((value >>> this.red_offset) & getMask(this.red_length)) << (8 - this.red_length);
+                    var g = ((value >>> this.green_offset) & getMask(this.green_length)) << (8 - this.green_length);
+                    var b = ((value >>> this.blue_offset) & getMask(this.blue_length)) << (8 - this.blue_length);
+
+                    idx = (y * this.width + x) * 4;
+                    buf[idx++] = b;
+                    buf[idx++] = g;
+                    buf[idx++] = r;
+                    buf[idx] = a;
+                }
+            }
+
+            this.pixels = buf;
+            this.size = this.pixels.length;
+        }
     } else {
         this.pixels = data;
     }
