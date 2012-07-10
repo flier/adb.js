@@ -318,6 +318,71 @@ function getMask(length) {
     return (1 << length) - 1;
 }
 
+AndroidFrame.prototype.convertRGB565toARGB = function (pixels) {
+    var buf = new Buffer(this.width * this.height * 4);
+
+    for (var x=0; x<this.width; x++) {
+        for (var y=0; y<this.height; y++) {
+            var idx = (y * this.width + x) * 2;
+            var value = (pixels[idx] & 0xFF) | ((pixels[idx+1] << 8) & 0xFF00);
+
+            var r = ((value >>> this.red_offset) & getMask(this.red_length)) << (8 - this.red_length);
+            var g = ((value >>> this.green_offset) & getMask(this.green_length)) << (8 - this.green_length);
+            var b = ((value >>> this.blue_offset) & getMask(this.blue_length)) << (8 - this.blue_length);
+
+            idx = (y * this.width + x) * 4;
+            buf[idx++] = b;
+            buf[idx++] = g;
+            buf[idx++] = r;
+            buf[idx] = a;
+        }
+    }
+
+    return buf;
+};
+
+AndroidFrame.prototype.parseFrameHeader = function (data) {
+    var version = this.pixels.readUInt32LE(0);
+
+    if (version == 1) {
+        this.depth = this.pixels.readUInt32LE(4);
+        this.size = this.pixels.readUInt32LE(8);
+        this.width = this.pixels.readUInt32LE(12);
+        this.height = this.pixels.readUInt32LE(16);
+
+        // create default values for the rest. Format is 565
+        this.red_offset = this.pixels.readUInt32LE(20);
+        this.red_length = this.pixels.readUInt32LE(24);
+        this.green_offset = this.pixels.readUInt32LE(28);
+        this.green_length = this.pixels.readUInt32LE(32);
+        this.blue_offset = this.pixels.readUInt32LE(36);
+        this.blue_length = this.pixels.readUInt32LE(40);
+        this.alpha_offset = this.pixels.readUInt32LE(44);
+        this.alpha_length = this.pixels.readUInt32LE(48);
+
+        this.pixels = this.pixels.slice(13*4);
+    } else if (version == 16) {
+        this.depth = 16;
+        this.size = this.pixels.readUInt32LE(4);
+        this.width = this.pixels.readUInt32LE(8);
+        this.height = this.pixels.readUInt32LE(12);
+
+        // create default values for the rest. Format is 565
+        this.red_offset = 11;
+        this.red_length = 5;
+        this.green_offset = 5;
+        this.green_length = 6;
+        this.blue_offset = 0;
+        this.blue_length = 5;
+        this.alpha_offset = 0;
+        this.alpha_length = 0;
+
+        this.pixels = this.pixels.slice(16);
+    }
+
+    console.log('found a %dx%d@%d frame with %d bytes', this.width, this.height, this.depth, this.size);
+};
+
 AndroidFrame.prototype.parseData = function (data) {
     if (this.pixels) {
         // console.log("append %d bytes: %s", data.length, data.inspect());
@@ -325,26 +390,7 @@ AndroidFrame.prototype.parseData = function (data) {
         this.pixels = Buffer.concat([this.pixels, data], this.pixels.length + data.length);
 
         if (this.pixels.length == this.size && this.depth == 16) {
-            var buf = new Buffer(this.width * this.height * 4);
-
-            for (var x=0; x<this.width; x++) {
-                for (var y=0; y<this.height; y++) {
-                    var idx = (y * this.width + x) * 2;
-                    var value = (this.pixels[idx] & 0xFF) | ((this.pixels[idx+1] << 8) & 0xFF00);
-
-                    var r = ((value >>> this.red_offset) & getMask(this.red_length)) << (8 - this.red_length);
-                    var g = ((value >>> this.green_offset) & getMask(this.green_length)) << (8 - this.green_length);
-                    var b = ((value >>> this.blue_offset) & getMask(this.blue_length)) << (8 - this.blue_length);
-
-                    idx = (y * this.width + x) * 4;
-                    buf[idx++] = b;
-                    buf[idx++] = g;
-                    buf[idx++] = r;
-                    buf[idx] = a;
-                }
-            }
-
-            this.pixels = buf;
+            this.pixels = this.convertRGB565toARGB(this.pixels);
             this.size = this.pixels.length;
         }
     } else {
@@ -352,45 +398,7 @@ AndroidFrame.prototype.parseData = function (data) {
     }
 
     if (!this.size && this.pixels.length >= 16) {
-        var version = this.pixels.readUInt32LE(0);
-
-        if (version == 1) {
-            this.depth = this.pixels.readUInt32LE(4);
-            this.size = this.pixels.readUInt32LE(8);
-            this.width = this.pixels.readUInt32LE(12);
-            this.height = this.pixels.readUInt32LE(16);
-
-            // create default values for the rest. Format is 565
-            this.red_offset = this.pixels.readUInt32LE(20);
-            this.red_length = this.pixels.readUInt32LE(24);
-            this.green_offset = this.pixels.readUInt32LE(28);
-            this.green_length = this.pixels.readUInt32LE(32);
-            this.blue_offset = this.pixels.readUInt32LE(36);
-            this.blue_length = this.pixels.readUInt32LE(40);
-            this.alpha_offset = this.pixels.readUInt32LE(44);
-            this.alpha_length = this.pixels.readUInt32LE(48);
-
-            this.pixels = this.pixels.slice(13*4);
-        } else if (version == 16) {
-            this.depth = 16;
-            this.size = this.pixels.readUInt32LE(4);
-            this.width = this.pixels.readUInt32LE(8);
-            this.height = this.pixels.readUInt32LE(12);
-
-            // create default values for the rest. Format is 565
-            this.red_offset = 11;
-            this.red_length = 5;
-            this.green_offset = 5;
-            this.green_length = 6;
-            this.blue_offset = 0;
-            this.blue_length = 5;
-            this.alpha_offset = 0;
-            this.alpha_length = 0;
-
-            this.pixels = this.pixels.slice(16);
-        }
-
-        console.log('found a %dx%d@%d frame with %d bytes', this.width, this.height, this.depth, this.size);
+        this.parseFrameHeader(data);
     }
 };
 
