@@ -1,4 +1,4 @@
 adb.js
 ======
 
-A node.js module which implement a pure javascript adb protocol to control Android device
+A node.js module which implement pure javascript adb protocol to control Android device

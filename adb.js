@@ -402,10 +402,6 @@ AndroidFrame.prototype.parseData = function (data) {
     }
 };
 
-function getMask(length) {
-    return (1 << length) - 1;
-}
-
 AndroidFrame.prototype.writeImageFile = function (filename) {
     console.log("generating %dx%d image from %d bytes buffer ...", this.width, this.height, this.pixels.length);
 

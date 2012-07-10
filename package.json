@@ -1,0 +1,26 @@
+{
+    "name": "adb",
+    "version": "0.2.0",
+    "main": "./adb.js",
+    "description": "A node.js module which implement pure javascript adb protocol to control Android device",
+    "keywords": [
+        "android",
+        "adb"
+    ],
+    "author": {
+        "name": "Flier Lu",
+        "email": "flier.lu@gmail.com",
+        "web": "http://flier.lu",
+        "twitter": "flierlu"
+    },
+    "license": {
+        "type": "MIT"
+    },
+    "repository": {
+        "type": "git",
+        "url": "http://github.com/flier/adb.js.git"
+    },
+    "engines": {
+        "node": "*"
+    }
+}
