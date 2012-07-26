@@ -44,7 +44,7 @@ DebugBridge.initialize = function () {
 DebugBridge.start_server = function (callback /* (code: number) */) {
     var spawn = require('child_process').spawn;
 
-    var adb = spawn('./adb', ['start-server']);
+    var adb = spawn('./' + require('os').platform() + '/adb', ['start-server']);
 
     adb.stdout.on('data', function (data) {
         console.log('stdout: ' + data);
@@ -301,6 +301,15 @@ AndroidDevice.prototype.takeSnapshot = function (callback /* (frame: Framebuffer
     });
 };
 
+AndroidDevice.prototype.getSyncService = function (callback /* (svc: SyncService) */) {
+    this.adb.prepareTransport(this.id, function (session) {
+        session.waitCmdResult(function (data) {
+            callback(new SyncService(session));
+        });
+        session.sendData('sync:');
+    });
+};
+
 var AndroidFrame = function () {
 };
 
@@ -435,4 +444,121 @@ AndroidFrame.prototype.writeImageFile = function (filename) {
             }
         });
     });
+};
+
+var SyncService = function (session) {
+    this.session = session;
+};
+
+util.inherits(SyncService, events.EventEmitter);
+
+SyncService.REMOTE_PATH_MAX_LENGTH = 1024;
+
+SyncService.ID_OKAY = 'OKAY';
+SyncService.ID_FAIL = 'FAIL';
+SyncService.ID_STAT = 'STAT';
+SyncService.ID_RECV = 'RECV';
+SyncService.ID_DATA = 'DATA';
+SyncService.ID_DONE = 'DONE';
+SyncService.ID_SEND = 'SEND';
+SyncService.ID_LIST = 'LIST';
+SyncService.ID_DENT = 'DENT';
+SyncService.ID_ULNK = 'ULNK';
+SyncService.ID_QUIT = 'QUIT';
+
+SyncService.prototype.createFileReq = function (cmd, path) {
+    var buf = new Buffer(8 + path.length);
+
+    buf.write(cmd, 0, 4, 'binary');
+    buf.writeUInt32LE(path.length, 4);
+    buf.write(path, 8, path.length, 'binary');
+
+    return buf;
+};
+
+SyncService.prototype.sendFileReq = function (cmd, path) {
+    var req = this.createFileReq(cmd, path);
+
+    console.log("send file %s request %s", cmd, req.inspect());
+
+    this.session.sock.write(req);
+};
+
+var StreamWriter = function (filename) {
+    this.stream = require('fs').createWriteStream(filename, { encoding: 'binary'});
+    this.ts = new Date().getTime();
+
+    this.totalSize = 0;
+    this.chunkSize = 0;
+    this.closed = false;
+};
+
+StreamWriter.prototype.close = function () {
+    this.stream.end();
+    this.closed = true;
+};
+
+StreamWriter.prototype.parseData = function (data) {
+    if (this.chunkSize > 0) {
+        var buf = data.length > this.chunkSize ? data.slice(0, this.chunkSize) : data;
+        var remaining = data.length > this.chunkSize ? data.slice(this.chunkSize) : null;
+
+        this.stream.write(buf);
+
+        this.totalSize += buf.length;
+        this.chunkSize -= buf.length;
+
+        if (remaining) this.parseData(remaining);
+    } else {
+        var id = data.slice(0, 4).toString();
+        var size = data.readUInt32LE(4);
+
+        //console.log("found id <%s> with %d bytes", id, size);
+
+        if (id == SyncService.ID_DATA) {
+            this.chunkSize = size;
+
+            this.parseData(data.slice(8));
+        } else if (id == SyncService.ID_DONE) {
+            console.log("receiving %d bytes file in %d KB/s", this.totalSize, this.recvSpeed);
+
+            this.close();
+        } else if (id == SyncService.ID_FAIL) {
+            var msg = data.slice(8, size).toString();
+
+            throw new Error('Adb Transfer Protocol Error, ' + msg);
+        } else {
+            throw new Error('Adb Transfer Protocol Error, unknown id - ' + id);
+        }
+    }
+};
+
+Object.defineProperty(StreamWriter.prototype, 'recvTimes', {
+    get: function () {
+        return new Date().getTime() - this.ts;
+    }
+});
+
+Object.defineProperty(StreamWriter.prototype, 'recvSpeed', {
+    get: function () {
+        return Math.round(new Number(this.totalSize) * 1000 / this.recvTimes / 1024 * 100) / 100;
+    }
+});
+
+SyncService.prototype.pullFile = function (remotePath, localPath, callback /* (size) */) {
+    if (remotePath.length > SyncService.REMOTE_PATH_MAX_LENGTH) {
+        throw new Error('Remote path is too long.');
+    }
+
+    var writer = new StreamWriter(localPath);
+
+    this.session.sock.on('data', function (data) {
+        //console.log("recv %d bytes %s", data.length, data.inspect());
+
+        writer.parseData(data);
+
+        if (writer.closed) callback(writer.totalSize);
+    });
+
+    this.sendFileReq(SyncService.ID_RECV, remotePath);
 };
