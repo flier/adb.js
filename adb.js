@@ -10,6 +10,7 @@ var DebugBridge = exports.DebugBridge = function () {
     }
 
     this.autoStartDaemon = true;
+    this.debug = false;
 };
 
 util.inherits(DebugBridge, events.EventEmitter);
@@ -31,14 +32,24 @@ DebugBridge.initialize = function () {
     });
 
     process.on('SIGINT', function () {
-        console.log('Got SIGINT, exiting...');
+        DebugBridge.log('log','Got SIGINT, exiting...');
 
         process.exit(0);
     });
 
     process.on('exit', function () {
-        console.log('About to exit.');
+        DebugBridge.log('log','About to exit.');
     });
+};
+
+DebugBridge.log = function (level, msg) {
+    if (level == 'error') {
+        console.error(msg);
+    } else if (DebugBridge.debug) {
+        if (level in console) {
+            console.call(level, msg, this);
+        }
+    }
 };
 
 DebugBridge.start_server = function (callback /* (code: number) */) {
@@ -47,11 +58,11 @@ DebugBridge.start_server = function (callback /* (code: number) */) {
     var adb = spawn('./' + require('os').platform() + '/adb', ['start-server']);
 
     adb.stdout.on('data', function (data) {
-        console.log('stdout: ' + data);
+        DebugBridge.log('log','stdout: ' + data);
     });
 
     adb.stderr.on('data', function (data) {
-        console.log('stderr: ' + data);
+        DebugBridge.log('log','stderr: ' + data);
     });
 
     adb.on('exit', function (code) {
@@ -68,7 +79,7 @@ DebugBridge.prototype.connect = function (callback /* (session: DebugSession) */
     var adb = this;
 
     var sock = net.connect({ port: DebugBridge.DEFAULT_PORT }, function () {
-        console.log('client connected to %s:%d', sock.remoteAddress, sock.remotePort);
+        DebugBridge.log('log','client connected to %s:%d', sock.remoteAddress, sock.remotePort);
 
         sock.session = new DebugSession(adb, sock);
         adb.emit('connected', sock.session);
@@ -79,22 +90,22 @@ DebugBridge.prototype.connect = function (callback /* (session: DebugSession) */
     sock.setKeepAlive(true);
     sock.setNoDelay(true);
     sock.on('end', function () {
-        console.log('client disconnected');
+        DebugBridge.log('log','client disconnected');
 
         sock.session.emit('disconnected');
 
         sock.end();
     });
     sock.on('timeout', function () {
-        console.log('client timeout');
+        DebugBridge.log('log','client timeout');
     });
     sock.on('error', function (err) {
         if ('ECONNREFUSED' == err.errno) {
-            console.log('client connect refused, restarting adb daemon...');
+            DebugBridge.log('log','client connect refused, restarting adb daemon...');
 
             if (adb.autoStartDaemon) {
                 DebugBridge.start_server(function (code) {
-                    console.log('start adb daemon: %d', code);
+                    DebugBridge.log('log','start adb daemon: %d', code);
 
                     if (code == 0) {
                         adb.connect(callback);
@@ -134,7 +145,7 @@ function decodeNumber(str) {
 DebugSession.prototype.sendData = function (data) {
     var buf = encodeNumber(data.length) + data;
 
-    console.log('send %d bytes: %s', buf.length, buf);
+    DebugBridge.log('log','send %d bytes: %s', buf.length, buf);
 
     this.sock.write(buf);
 };
@@ -143,11 +154,11 @@ DebugSession.prototype.parseCmdResult = function (data, callback /* (data: buffe
     var code = data.slice(0, 4).toString();
 
     if (code == 'OKAY') {
-        console.log('exec command succeeded');
+        DebugBridge.log('log','exec command succeeded');
 
         this.parseData(data.slice(4), callback);
     } else if (code == 'FAIL') {
-        console.log('exec command failed');
+        DebugBridge.log('log','exec command failed');
 
         this.parseData(data.slice(4), function (msg) {
             throw new Error(msg);
@@ -169,7 +180,7 @@ DebugSession.prototype.parseData = function (data, callback /* (data: buffer) */
 
     var len = decodeNumber(data.slice(0, 4));
 
-    console.log('found %d bytes data: %s', len, data.slice(4, 4+len));
+    DebugBridge.log('log','found %d bytes data: %s', len, data.slice(4, 4+len));
 
     if (data.length < len+4) {
         // TODO wait for the remaining data
@@ -186,7 +197,7 @@ DebugSession.prototype.waitCmdResult = function (callback /* (data: buffer) */) 
     var session = this;
 
     this.sock.once('data', function (data) {
-        console.log('recv %d bytes data: %s', data.length, data);
+        DebugBridge.log('log','recv %d bytes data: %s', data.length, data);
 
         session.parseCmdResult(data, callback);
     });
@@ -277,6 +288,34 @@ Object.defineProperty(AndroidDevice.prototype, 'isEmulator', {
         return this.id.indexOf("emulator-") == 0;
     }
 });
+
+AndroidDevice.prototype.logcat = function onLogCat() {
+    this.adb.prepareTransport(this.id, function onTransport(session) {
+        session.waitCmdResult(function onResult(cmdResult) {
+            session.recvData(function onData(data) {
+                /*
+                struct logger_entry {
+                    uint16_t    len;    // length of the payload
+                    uint16_t    __pad;  // no matter what, we get 2 bytes of padding
+                    int32_t     pid;    // generating process's pid
+                    int32_t     tid;    // generating process's tid
+                    int32_t     sec;    // seconds since Epoch
+                    int32_t     nsec;   // nanoseconds
+                    char        msg[0]; // the entry's payload
+                };
+                */
+                var len = data.readUInt16LE(0);
+                var pid = data.readUInt32LE(4);
+                var tid = data.readUInt32LE(8);
+                var date = new Date(data.readUInt32LE(12) * 1000);
+                var msg = data.slice(20);
+                console.log('[' + date + '] ' + msg);
+                
+            });
+        });
+        session.sendData('log:main');
+    });
+};
 
 AndroidDevice.prototype.takeSnapshot = function (callback /* (frame: Framebuffer) */) {
     this.adb.prepareTransport(this.id, function (session) {

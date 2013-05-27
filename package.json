@@ -13,14 +13,23 @@
         "web": "http://flier.lu",
         "twitter": "flierlu"
     },
+    "contributors": [
+        "Francisco Jordano <francisco@jordano.es>"
+    ],
     "license": {
         "type": "MIT"
     },
     "repository": {
         "type": "git",
-        "url": "http://github.com/flier/adb.js.git"
+        "url": "http://github.com/arcturus/adb.js.git"
     },
     "engines": {
         "node": "*"
+    },
+    "dependencies": {
+        "png": "*",
+        "gif": "*",
+        "jpeg": "*"
+
     }
 }
