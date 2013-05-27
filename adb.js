@@ -207,6 +207,10 @@ DebugSession.prototype.recvData = function (callback /* (data: buffer) */) {
     this.sock.on('data', callback);
 };
 
+DebugSession.prototype.onClosed = function onClosed(callback) {
+    this.sock.on('close', callback);
+};
+
 DebugBridge.prototype.execCommand = function (cmd, callback /* (data: buffer) */, repeat) {
     this.connect(function (session) {
         session.waitCmdResult(callback, repeat);
@@ -314,6 +318,44 @@ AndroidDevice.prototype.logcat = function onLogCat() {
             });
         });
         session.sendData('log:main');
+    });
+};
+
+AndroidDevice.prototype.shellCmd = function onShellCmd(cmd, args, callback) {
+    if (cmd === null || typeof cmd !== 'string') {
+        callback(null);
+        return;
+    }
+
+    var payload = cmd;
+
+    if (args != null && Array.isArray(args)) {
+        for(var i = 0; i < args.length; i++) {
+            if (typeof args[i] == 'string') {
+                args[i] = args[i].replace('"','');
+            }
+        }
+
+        payload += ' ' + args.join(' ');
+    }
+    this.adb.prepareTransport(this.id, function onTransport(session) {
+        var buffer = [];
+        session.waitCmdResult( function onResult(cmdResult) {
+            session.recvData(function onData(data) {
+                var chunk = data.toString();
+                if (chunk && chunk.length > 0) {
+                    buffer.push(chunk);
+                }
+            })
+        });
+        session.onClosed(function onClosed() {
+            if (callback) {
+                callback(buffer.join(''));
+            } else {
+                console.log(buffer.join(''));
+            }
+        });
+        session.sendData('shell:' + payload);
     });
 };
 

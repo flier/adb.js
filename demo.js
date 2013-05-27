@@ -1,5 +1,6 @@
 var DebugBridge = require('./adb.js').DebugBridge;
 
+
 var adb = new DebugBridge();
 adb.getVersion(function (version) {
     console.log('Android Debug Bridge version 1.0.%d', version);
@@ -34,4 +35,14 @@ adb.traceDevice(function onDevices(devices) {
         var device = devices[i];
         device.logcat();
     }
-})
+});
+
+
+adb.traceDevice(function onDevices(devices) {
+    for (var i = 0; i < devices.length; i++) {
+        var device = devices[i];
+        device.shellCmd('ls', ['/'], function onCmd(data) {
+            console.log(data.toString());
+        })
+    }
+});
