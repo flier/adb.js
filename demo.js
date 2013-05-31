@@ -43,6 +43,10 @@ adb.traceDevice(function onDevices(devices) {
         var device = devices[i];
         device.shellCmd('ls', ['/'], function onCmd(data) {
             console.log(data.toString());
-        })
+        });
     }
+});
+
+adb.forward('tcp:6000', 'tcp:6000', function onForward() {
+    console.log('Forwarded tcp:6000 to tcp:6000');
 });
