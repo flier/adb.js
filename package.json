@@ -21,7 +21,7 @@
     },
     "repository": {
         "type": "git",
-        "url": "http://github.com/arcturus/adb.js.git"
+        "url": "http://github.com/flier/adb.js.git"
     },
     "engines": {
         "node": "*"
