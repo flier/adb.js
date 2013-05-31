@@ -501,39 +501,28 @@ AndroidFrame.prototype.parseData = function (data) {
     }
 };
 
-AndroidFrame.prototype.writeImageFile = function (filename) {
+AndroidFrame.prototype.writeImageFile = function (filename, open) {
     console.log("generating %dx%d image from %d bytes buffer ...", this.width, this.height, this.pixels.length);
 
-    var ext = require('path').extname(filename);
-    var Image;
-
-    if (ext == '.png') {
-        Image = require('png').Png;
-    } else if (ext == '.jpg') {
-        Image = require('jpeg').Jpeg;
-    } else if (ext == '.gif') {
-        Image = require('gif').Gif;
-    } else {
-        throw new Error("unknown image type - " + ext);
+    if (!filename) {
+        filename = 'screenshot.png';
     }
 
-    img = new Image(this.pixels, this.width, this.height, 'rgba');
+    fs = require('fs');
 
-    img.encode(function (image, err) {
-        console.log("writing %d bytes Image file ...", image.length);
-
-        if (err) { throw new Error(err); }
-
-        require('fs').writeFile(filename, image.toString('binary'), 'binary', function (err) {
-            if (err) {
-                console.error(err);
-            } else {
-                var spawn = require('child_process').spawn;
-
-                spawn('open', [filename]);
-            }
-        });
+    PNG = require('pngjs').PNG;
+    var png = new PNG({
+        filterType: 4,
+        width: this.width,
+        height: this.height
     });
+    png.data = this.pixels;
+    png.pack().pipe(fs.createWriteStream(filename));
+
+    if (open) {
+        var spawn = require('child_process').spawn;
+        spawn('open', [filename]);
+    }
 };
 
 var SyncService = function (session) {
