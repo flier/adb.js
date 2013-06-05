@@ -1,7 +1,8 @@
-var console = require('console');
-var net = require('net');
-var events = require('events');
-var util = require('util');
+var console = require('console'),
+    net = require('net'),
+    events = require('events'),
+    util = require('util'),
+    fs = require('fs');
 
 var DebugBridge = exports.DebugBridge = function () {
     if (!DebugBridge.initialized) {
@@ -641,3 +642,92 @@ SyncService.prototype.pullFile = function (remotePath, localPath, callback /* (s
 
     this.sendFileReq(SyncService.ID_RECV, remotePath);
 };
+
+SyncService.prototype.pushFile = function pushFile(localPath, remotePath, callback) {
+    var pusher = new StreamPusher(localPath, remotePath, callback);
+    pusher.start(this.session);
+};
+
+var StreamPusher = function (localPath, remotePath, callback) {
+    if (remotePath.length > SyncService.REMOTE_PATH_MAX_LENGTH) {
+        throw new Exception('Remote path too long');
+    }
+
+    this.stats = null;
+
+    try {
+        this.stats = fs.lstatSync(localPath);
+        if (!this.stats.isFile()) {
+            throw new Exception('Only supported file push');
+        }
+
+    } catch (e) {
+        callback(e);
+    }
+
+    this.localPath = localPath;
+    this.remotePath = remotePath;
+    this.callback = callback;
+    this.arrayBuffer = [];
+
+};
+
+StreamPusher.prototype.start = function start(session) {
+    this.session = session;
+    var self = this;
+    this.session.sock.on('data', function onData(data) {
+        var id = data.slice(0, 4).toString();
+        var info = data.readUInt32LE(4);
+
+        if (id == SyncService.ID_OKAY) {
+            self.callback(null, self.remotePath);
+        } else if (id == SyncService.ID_FAIL) {
+            self.callback(info);
+        }
+    });
+
+    //Read the file
+    var self = this;
+    this.stream = fs.createReadStream(this.localPath, { encoding: 'binary'});
+    this.stream.on('readable', function onReadable() {
+        var chunk;
+        while (null !== (chunk = this.read())) {
+            self.arrayBuffer.push(chunk);
+        }
+    });
+    this.stream.on('close', function end() {
+        // Once we have cached the chunks, start pushing them
+        self._startPush();
+    });
+};
+
+StreamPusher.prototype._pushChunk = function (data) {
+    var buf = new Buffer(8 + data.length);
+    buf.write(SyncService.ID_DATA, 0, 4, 'binary');
+    buf.writeUInt32LE(data.length, 4);
+    buf.write(data, 8, data.length, 'binary');
+
+    this.session.sock.write(buf);
+};
+
+StreamPusher.prototype._startPush = function startPush() {
+    var message = this.remotePath + ',' + this.stats.mode;
+    var buf = new Buffer(8 + message.length);
+
+    buf.write(SyncService.ID_SEND, 0, 4, 'binary');
+    buf.writeUInt32LE(message.length, 4);
+    buf.write(message, 8, message.length, 'binary');
+    this.session.sock.write(buf);
+
+    for(var i = 0; i < this.arrayBuffer.length; i++) {
+        this._pushChunk(this.arrayBuffer[i]);
+    }
+
+    data = String(this.stats.mtime.getTime());
+    buf = new Buffer(8 + data.length);
+    buf.write(SyncService.ID_DONE, 0, 4, 'binary');
+    buf.writeUInt32LE(data.length, 4);
+    buf.write(data, 8, data.length, 'binary');
+    this.session.sock.write(buf);
+};
+

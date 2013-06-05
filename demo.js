@@ -37,7 +37,6 @@ adb.traceDevice(function onDevices(devices) {
     }
 });
 
-
 adb.traceDevice(function onDevices(devices) {
     for (var i = 0; i < devices.length; i++) {
         var device = devices[i];
@@ -50,3 +49,24 @@ adb.traceDevice(function onDevices(devices) {
 adb.forward('tcp:6000', 'tcp:6000', function onForward() {
     console.log('Forwarded tcp:6000 to tcp:6000');
 });
+
+/*
+adb.traceDevice(function (devices) {
+    console.log('found %d device %s', devices.length, devices);
+
+    for (var i=0; i<devices.length; i++) {
+        var device = devices[i];
+
+        device.getSyncService(function (svc) {
+            svc.pushFile('<path to my file>', '/sdcard/file', function onPush(err, data) {
+                if (err) {
+                    console.log('Error ::: ' + err);
+                } else {
+                    console.log('Successfuly pushed to ' + data);
+                }
+                process.exit(0);
+            });
+        });
+    }
+});
+*/
