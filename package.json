@@ -24,7 +24,7 @@
         "url": "http://github.com/flier/adb.js.git"
     },
     "engines": {
-        "node": "*"
+        "node": ">=0.10.10"
     },
     "dependencies": {
         "pngjs": "*"
