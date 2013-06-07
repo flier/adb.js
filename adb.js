@@ -1,7 +1,8 @@
-var console = require('console');
-var net = require('net');
-var events = require('events');
-var util = require('util');
+var console = require('console'),
+    net = require('net'),
+    events = require('events'),
+    util = require('util'),
+    fs = require('fs');
 
 var DebugBridge = exports.DebugBridge = function () {
     if (!DebugBridge.initialized) {
@@ -10,6 +11,7 @@ var DebugBridge = exports.DebugBridge = function () {
     }
 
     this.autoStartDaemon = true;
+    this.debug = false;
 };
 
 util.inherits(DebugBridge, events.EventEmitter);
@@ -31,14 +33,24 @@ DebugBridge.initialize = function () {
     });
 
     process.on('SIGINT', function () {
-        console.log('Got SIGINT, exiting...');
+        DebugBridge.log('log','Got SIGINT, exiting...');
 
         process.exit(0);
     });
 
     process.on('exit', function () {
-        console.log('About to exit.');
+        DebugBridge.log('log','About to exit.');
     });
+};
+
+DebugBridge.log = function (level, msg) {
+    if (level == 'error') {
+        console.error(msg);
+    } else if (DebugBridge.debug) {
+        if (level in console) {
+            console.call(level, msg, this);
+        }
+    }
 };
 
 DebugBridge.start_server = function (callback /* (code: number) */) {
@@ -47,11 +59,11 @@ DebugBridge.start_server = function (callback /* (code: number) */) {
     var adb = spawn('./' + require('os').platform() + '/adb', ['start-server']);
 
     adb.stdout.on('data', function (data) {
-        console.log('stdout: ' + data);
+        DebugBridge.log('log','stdout: ' + data);
     });
 
     adb.stderr.on('data', function (data) {
-        console.log('stderr: ' + data);
+        DebugBridge.log('log','stderr: ' + data);
     });
 
     adb.on('exit', function (code) {
@@ -68,7 +80,7 @@ DebugBridge.prototype.connect = function (callback /* (session: DebugSession) */
     var adb = this;
 
     var sock = net.connect({ port: DebugBridge.DEFAULT_PORT }, function () {
-        console.log('client connected to %s:%d', sock.remoteAddress, sock.remotePort);
+        DebugBridge.log('log','client connected to %s:%d', sock.remoteAddress, sock.remotePort);
 
         sock.session = new DebugSession(adb, sock);
         adb.emit('connected', sock.session);
@@ -79,22 +91,22 @@ DebugBridge.prototype.connect = function (callback /* (session: DebugSession) */
     sock.setKeepAlive(true);
     sock.setNoDelay(true);
     sock.on('end', function () {
-        console.log('client disconnected');
+        DebugBridge.log('log','client disconnected');
 
         sock.session.emit('disconnected');
 
         sock.end();
     });
     sock.on('timeout', function () {
-        console.log('client timeout');
+        DebugBridge.log('log','client timeout');
     });
     sock.on('error', function (err) {
         if ('ECONNREFUSED' == err.errno) {
-            console.log('client connect refused, restarting adb daemon...');
+            DebugBridge.log('log','client connect refused, restarting adb daemon...');
 
             if (adb.autoStartDaemon) {
                 DebugBridge.start_server(function (code) {
-                    console.log('start adb daemon: %d', code);
+                    DebugBridge.log('log','start adb daemon: %d', code);
 
                     if (code == 0) {
                         adb.connect(callback);
@@ -134,7 +146,7 @@ function decodeNumber(str) {
 DebugSession.prototype.sendData = function (data) {
     var buf = encodeNumber(data.length) + data;
 
-    console.log('send %d bytes: %s', buf.length, buf);
+    DebugBridge.log('log','send %d bytes: %s', buf.length, buf);
 
     this.sock.write(buf);
 };
@@ -143,11 +155,11 @@ DebugSession.prototype.parseCmdResult = function (data, callback /* (data: buffe
     var code = data.slice(0, 4).toString();
 
     if (code == 'OKAY') {
-        console.log('exec command succeeded');
+        DebugBridge.log('log','exec command succeeded');
 
         this.parseData(data.slice(4), callback);
     } else if (code == 'FAIL') {
-        console.log('exec command failed');
+        DebugBridge.log('log','exec command failed');
 
         this.parseData(data.slice(4), function (msg) {
             throw new Error(msg);
@@ -169,7 +181,7 @@ DebugSession.prototype.parseData = function (data, callback /* (data: buffer) */
 
     var len = decodeNumber(data.slice(0, 4));
 
-    console.log('found %d bytes data: %s', len, data.slice(4, 4+len));
+    DebugBridge.log('log','found %d bytes data: %s', len, data.slice(4, 4+len));
 
     if (data.length < len+4) {
         // TODO wait for the remaining data
@@ -186,7 +198,7 @@ DebugSession.prototype.waitCmdResult = function (callback /* (data: buffer) */) 
     var session = this;
 
     this.sock.once('data', function (data) {
-        console.log('recv %d bytes data: %s', data.length, data);
+        DebugBridge.log('log','recv %d bytes data: %s', data.length, data);
 
         session.parseCmdResult(data, callback);
     });
@@ -194,6 +206,10 @@ DebugSession.prototype.waitCmdResult = function (callback /* (data: buffer) */) 
 
 DebugSession.prototype.recvData = function (callback /* (data: buffer) */) {
     this.sock.on('data', callback);
+};
+
+DebugSession.prototype.onClosed = function onClosed(callback) {
+    this.sock.on('close', callback);
 };
 
 DebugBridge.prototype.execCommand = function (cmd, callback /* (data: buffer) */, repeat) {
@@ -262,6 +278,15 @@ DebugBridge.prototype.traceDevice = function (callback /* (devices: AndroidDevic
     }, true);
 };
 
+DebugBridge.prototype.forward = function forward(local, remote, callback) {
+    var adb = this;
+
+    this.connect(function onConnect(session) {
+        session.sendData('host:forward:' + local + ';' + remote);
+        callback();
+    })
+}
+
 var AndroidDevice = function (adb, id, type) {
     this.adb = adb;
     this.id = id;
@@ -277,6 +302,72 @@ Object.defineProperty(AndroidDevice.prototype, 'isEmulator', {
         return this.id.indexOf("emulator-") == 0;
     }
 });
+
+AndroidDevice.prototype.logcat = function onLogCat() {
+    this.adb.prepareTransport(this.id, function onTransport(session) {
+        session.waitCmdResult(function onResult(cmdResult) {
+            session.recvData(function onData(data) {
+                /*
+                struct logger_entry {
+                    uint16_t    len;    // length of the payload
+                    uint16_t    __pad;  // no matter what, we get 2 bytes of padding
+                    int32_t     pid;    // generating process's pid
+                    int32_t     tid;    // generating process's tid
+                    int32_t     sec;    // seconds since Epoch
+                    int32_t     nsec;   // nanoseconds
+                    char        msg[0]; // the entry's payload
+                };
+                */
+                var len = data.readUInt16LE(0);
+                var pid = data.readUInt32LE(4);
+                var tid = data.readUInt32LE(8);
+                var date = new Date(data.readUInt32LE(12) * 1000);
+                var msg = data.slice(20);
+                console.log('[' + date + '] ' + msg);
+                
+            });
+        });
+        session.sendData('log:main');
+    });
+};
+
+AndroidDevice.prototype.shellCmd = function onShellCmd(cmd, args, callback) {
+    if (cmd === null || typeof cmd !== 'string') {
+        callback(null);
+        return;
+    }
+
+    var payload = cmd;
+
+    if (args != null && Array.isArray(args)) {
+        for(var i = 0; i < args.length; i++) {
+            if (typeof args[i] == 'string') {
+                args[i] = args[i].replace('"','');
+            }
+        }
+
+        payload += ' ' + args.join(' ');
+    }
+    this.adb.prepareTransport(this.id, function onTransport(session) {
+        var buffer = [];
+        session.waitCmdResult( function onResult(cmdResult) {
+            session.recvData(function onData(data) {
+                var chunk = data.toString();
+                if (chunk && chunk.length > 0) {
+                    buffer.push(chunk);
+                }
+            })
+        });
+        session.onClosed(function onClosed() {
+            if (callback) {
+                callback(buffer.join(''));
+            } else {
+                console.log(buffer.join(''));
+            }
+        });
+        session.sendData('shell:' + payload);
+    });
+};
 
 AndroidDevice.prototype.takeSnapshot = function (callback /* (frame: Framebuffer) */) {
     this.adb.prepareTransport(this.id, function (session) {
@@ -411,39 +502,28 @@ AndroidFrame.prototype.parseData = function (data) {
     }
 };
 
-AndroidFrame.prototype.writeImageFile = function (filename) {
+AndroidFrame.prototype.writeImageFile = function (filename, open) {
     console.log("generating %dx%d image from %d bytes buffer ...", this.width, this.height, this.pixels.length);
 
-    var ext = require('path').extname(filename);
-    var Image;
-
-    if (ext == '.png') {
-        Image = require('png').Png;
-    } else if (ext == '.jpg') {
-        Image = require('jpeg').Jpeg;
-    } else if (ext == '.gif') {
-        Image = require('gif').Gif;
-    } else {
-        throw new Error("unknown image type - " + ext);
+    if (!filename) {
+        filename = 'screenshot.png';
     }
 
-    img = new Image(this.pixels, this.width, this.height, 'rgba');
+    fs = require('fs');
 
-    img.encode(function (image, err) {
-        console.log("writing %d bytes Image file ...", image.length);
-
-        if (err) { throw new Error(err); }
-
-        require('fs').writeFile(filename, image.toString('binary'), 'binary', function (err) {
-            if (err) {
-                console.error(err);
-            } else {
-                var spawn = require('child_process').spawn;
-
-                spawn('open', [filename]);
-            }
-        });
+    PNG = require('pngjs').PNG;
+    var png = new PNG({
+        filterType: 4,
+        width: this.width,
+        height: this.height
     });
+    png.data = this.pixels;
+    png.pack().pipe(fs.createWriteStream(filename));
+
+    if (open) {
+        var spawn = require('child_process').spawn;
+        spawn('open', [filename]);
+    }
 };
 
 var SyncService = function (session) {
@@ -562,3 +642,92 @@ SyncService.prototype.pullFile = function (remotePath, localPath, callback /* (s
 
     this.sendFileReq(SyncService.ID_RECV, remotePath);
 };
+
+SyncService.prototype.pushFile = function pushFile(localPath, remotePath, callback) {
+    var pusher = new StreamPusher(localPath, remotePath, callback);
+    pusher.start(this.session);
+};
+
+var StreamPusher = function (localPath, remotePath, callback) {
+    if (remotePath.length > SyncService.REMOTE_PATH_MAX_LENGTH) {
+        throw new Exception('Remote path too long');
+    }
+
+    this.stats = null;
+
+    try {
+        this.stats = fs.lstatSync(localPath);
+        if (!this.stats.isFile()) {
+            throw new Exception('Only supported file push');
+        }
+
+    } catch (e) {
+        callback(e);
+    }
+
+    this.localPath = localPath;
+    this.remotePath = remotePath;
+    this.callback = callback;
+    this.arrayBuffer = [];
+
+};
+
+StreamPusher.prototype.start = function start(session) {
+    this.session = session;
+    var self = this;
+    this.session.sock.on('data', function onData(data) {
+        var id = data.slice(0, 4).toString();
+        var info = data.readUInt32LE(4);
+
+        if (id == SyncService.ID_OKAY) {
+            self.callback(null, self.remotePath);
+        } else if (id == SyncService.ID_FAIL) {
+            self.callback(info);
+        }
+    });
+
+    //Read the file
+    var self = this;
+    this.stream = fs.createReadStream(this.localPath, { encoding: 'binary'});
+    this.stream.on('readable', function onReadable() {
+        var chunk;
+        while (null !== (chunk = this.read())) {
+            self.arrayBuffer.push(chunk);
+        }
+    });
+    this.stream.on('close', function end() {
+        // Once we have cached the chunks, start pushing them
+        self._startPush();
+    });
+};
+
+StreamPusher.prototype._pushChunk = function (data) {
+    var buf = new Buffer(8 + data.length);
+    buf.write(SyncService.ID_DATA, 0, 4, 'binary');
+    buf.writeUInt32LE(data.length, 4);
+    buf.write(data, 8, data.length, 'binary');
+
+    this.session.sock.write(buf);
+};
+
+StreamPusher.prototype._startPush = function startPush() {
+    var message = this.remotePath + ',' + this.stats.mode;
+    var buf = new Buffer(8 + message.length);
+
+    buf.write(SyncService.ID_SEND, 0, 4, 'binary');
+    buf.writeUInt32LE(message.length, 4);
+    buf.write(message, 8, message.length, 'binary');
+    this.session.sock.write(buf);
+
+    for(var i = 0; i < this.arrayBuffer.length; i++) {
+        this._pushChunk(this.arrayBuffer[i]);
+    }
+
+    data = String(this.stats.mtime.getTime());
+    buf = new Buffer(8 + data.length);
+    buf.write(SyncService.ID_DONE, 0, 4, 'binary');
+    buf.writeUInt32LE(data.length, 4);
+    buf.write(data, 8, data.length, 'binary');
+    this.session.sock.write(buf);
+};
+
